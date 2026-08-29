@@ -1,0 +1,17 @@
+{
+  "name": "@loggify/browser",
+  "version": "0.1.0",
+  "description": "Loggify browser SDK - product analytics, RUM, and client errors",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "npm run build && node --test"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}
