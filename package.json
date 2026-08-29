@@ -1,15 +1,25 @@
 {
-  "name": "@loggify/browser",
+  "name": "@loggifycloud/browser",
   "version": "0.1.0",
   "description": "Loggify browser SDK - product analytics, RUM, and client errors",
+  "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": ["dist"],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "npm run build && node --test"
+    "test": "npm run build && node --test",
+    "prepublishOnly": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/loggifycloud/browser-sdk.git"
   },
   "devDependencies": {
     "typescript": "^5.7.2"

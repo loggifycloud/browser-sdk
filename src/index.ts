@@ -143,7 +143,7 @@ class LoggifyBrowser {
 
   init(options: BrowserOptions) {
     this.opts = {
-      endpoint: 'http://localhost:3001',
+      endpoint: 'https://ingest.loggify.cloud',
       service: 'browser',
       environment: 'production',
       autocapture: true,

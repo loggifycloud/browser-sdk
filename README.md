@@ -1,13 +1,13 @@
-# @loggify/browser
+# @loggifycloud/browser
 
 First-party browser SDK for Mixpanel-like product analytics and Sentry-style RUM.
 
 ```ts
-import { loggify } from '@loggify/browser';
+import { loggify } from '@loggifycloud/browser';
 
 loggify.init({
   apiKey: import.meta.env.VITE_LOGGIFY_KEY,
-  endpoint: 'http://localhost:3001',
+  endpoint: 'https://ingest.loggify.cloud',
   service: 'web-app',
   environment: 'production',
   release: '1.4.2',
