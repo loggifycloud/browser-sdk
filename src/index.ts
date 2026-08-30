@@ -64,6 +64,10 @@ interface SpanRow {
 const AID = 'loggify_aid';
 const SID = 'loggify_sid';
 const SID_AT = 'loggify_sid_at';
+const UID = 'loggify_uid';
+const SP = 'loggify_sp';
+const PP = 'loggify_pp';
+const OPTOUT = 'loggify_optout';
 const SESSION_MS = 30 * 60_000;
 const SENSITIVE = /password|token|secret|authorization|cookie|ssn|card/i;
 
@@ -78,6 +82,10 @@ class BufferQueue<T> {
     const out = this.items;
     this.items = [];
     return out;
+  }
+  restore(items: T[]) {
+    const merged = [...items, ...this.items];
+    this.items = merged.length > this.max ? merged.slice(merged.length - this.max) : merged;
   }
 }
 
@@ -124,7 +132,51 @@ function safeValue(value: unknown) {
   return String(value).slice(0, 120);
 }
 
-class LoggifyBrowser {
+function readJson(key: string): Properties {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return parsed as Properties;
+  } catch {
+    return {};
+  }
+}
+
+function writeJson(key: string, value: Properties) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function storageGet(key: string) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* ignore */
+  }
+}
+
+function storageRemove(key: string) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    /* ignore */
+  }
+}
+
+export class LoggifyBrowser {
   private opts!: BrowserOptions;
   private events = new BufferQueue<AnalyticsRow>(200);
   private errors = new BufferQueue<ErrorRow>(100);
@@ -132,13 +184,23 @@ class LoggifyBrowser {
   private spans = new BufferQueue<SpanRow>(100);
   private breadcrumbs: Array<{ timestamp: string; category: string; message: string; level?: string }> = [];
   private user: Record<string, string> = {};
+  private peopleProps: Properties = {};
+  private superProps: Properties = {};
+  private timed = new Map<string, number>();
+  private optedOut = false;
   private distinctId = '';
   private sessionId = '';
   private pageEntered = 0;
   private timer?: ReturnType<typeof setInterval>;
   private instrumented = false;
-  readonly people: { set: (traits: Properties) => LoggifyBrowser } = {
-    set: (traits: Properties) => this.identify(this.user.id || this.distinctId, traits),
+  readonly people: {
+    set: (traits: Properties) => LoggifyBrowser;
+    setOnce: (traits: Properties) => LoggifyBrowser;
+    increment: (key: string, amount?: number) => LoggifyBrowser;
+  } = {
+    set: (traits: Properties) => this.setPeople(traits),
+    setOnce: (traits: Properties) => this.setPeopleOnce(traits),
+    increment: (key: string, amount = 1) => this.incrementPeople(key, amount),
   };
 
   init(options: BrowserOptions) {
@@ -174,17 +236,25 @@ class LoggifyBrowser {
   }
 
   track(event: string, properties: Properties = {}) {
-    if (!this.opts) return this;
+    if (!this.opts || this.optedOut) return this;
     const info = ua();
     const utm = utmFrom(typeof location === 'undefined' ? '' : location.href);
+    const started = this.timed.get(event);
+    if (started != null) this.timed.delete(event);
+    const merged: Properties = {
+      ...this.superProps,
+      ...properties,
+      ...(started != null ? { $duration: (Date.now() - started) / 1000 } : {}),
+    };
     this.events.push({
       event,
-      properties: this.sanitize(properties),
+      properties: this.sanitize(merged),
       distinctId: this.distinctId,
       userId: this.user.id,
       sessionId: this.sessionId,
       timestamp: new Date().toISOString(),
       kind: event === '$pageview' ? 'page' : 'track',
+      traits: this.peopleSnapshot(),
       pageUrl: typeof location === 'undefined' ? '' : location.href,
       referrer: typeof document === 'undefined' ? '' : document.referrer,
       ...utm,
@@ -198,7 +268,11 @@ class LoggifyBrowser {
   }
 
   identify(userId: string, traits: Properties = {}) {
+    if (this.optedOut) return this;
     this.user = { ...this.user, id: userId, ...this.stringRecord(traits) };
+    this.peopleProps = { ...this.peopleProps, ...this.sanitize(traits) };
+    this.persistPeople();
+    storageSet(UID, userId);
     this.events.push({
       event: '$identify',
       kind: 'identify',
@@ -206,7 +280,7 @@ class LoggifyBrowser {
       userId,
       sessionId: this.sessionId,
       timestamp: new Date().toISOString(),
-      traits: this.sanitize(traits),
+      traits: this.peopleSnapshot(),
       properties: this.sanitize(traits),
       release: this.opts?.release,
       serviceName: this.opts?.service,
@@ -215,10 +289,70 @@ class LoggifyBrowser {
     return this;
   }
 
+  register(properties: Properties) {
+    this.superProps = { ...this.superProps, ...this.sanitize(properties) };
+    writeJson(SP, this.superProps);
+    return this;
+  }
+
+  registerOnce(properties: Properties) {
+    const next: Properties = {};
+    for (const [key, value] of Object.entries(this.sanitize(properties))) {
+      if (!(key in this.superProps)) next[key] = value;
+    }
+    if (Object.keys(next).length) this.register(next);
+    return this;
+  }
+
+  unregister(key: string) {
+    delete this.superProps[key];
+    writeJson(SP, this.superProps);
+    return this;
+  }
+
+  timeEvent(name: string) {
+    this.timed.set(name, Date.now());
+    return this;
+  }
+
+  getDistinctId() {
+    return this.distinctId;
+  }
+
+  getSessionId() {
+    return this.sessionId;
+  }
+
+  optOut() {
+    this.optedOut = true;
+    storageSet(OPTOUT, '1');
+    this.events.drain();
+    this.errors.drain();
+    this.metrics.drain();
+    this.spans.drain();
+    return this;
+  }
+
+  optIn() {
+    this.optedOut = false;
+    storageRemove(OPTOUT);
+    return this;
+  }
+
+  hasOptedOut() {
+    return this.optedOut;
+  }
+
   reset() {
     this.user = {};
+    this.peopleProps = {};
+    this.superProps = {};
+    this.timed.clear();
     this.distinctId = hex(16);
     this.sessionId = hex(8);
+    writeJson(SP, {});
+    writeJson(PP, {});
+    storageRemove(UID);
     try {
       localStorage.setItem(AID, this.distinctId);
       sessionStorage.setItem(SID, this.sessionId);
@@ -246,6 +380,7 @@ class LoggifyBrowser {
   }
 
   captureException(err: unknown, extra?: Partial<ErrorRow>) {
+    if (this.optedOut) return this;
     const error = err instanceof Error ? err : new Error(String(err));
     this.errors.push({
       message: error.message,
@@ -263,6 +398,13 @@ class LoggifyBrowser {
   }
 
   async flush() {
+    if (this.optedOut) {
+      this.events.drain();
+      this.errors.drain();
+      this.metrics.drain();
+      this.spans.drain();
+      return;
+    }
     const events = this.events.drain();
     const errors = this.errors.drain();
     const metrics = this.metrics.drain();
@@ -278,7 +420,13 @@ class LoggifyBrowser {
           },
         ]
       : [];
-    await this.post({ events, errors, metrics, traces });
+    const ok = await this.post({ events, errors, metrics, traces });
+    if (!ok) {
+      this.events.restore(events);
+      this.errors.restore(errors);
+      this.metrics.restore(metrics);
+      this.spans.restore(spanEvents);
+    }
   }
 
   shutdown() {
@@ -286,6 +434,33 @@ class LoggifyBrowser {
     this.timer = undefined;
     this.instrumented = false;
     return this;
+  }
+
+  private setPeople(traits: Properties) {
+    return this.identify(this.user.id || this.distinctId, traits);
+  }
+
+  private setPeopleOnce(traits: Properties) {
+    const next: Properties = {};
+    for (const [key, value] of Object.entries(this.sanitize(traits))) {
+      if (!(key in this.peopleProps)) next[key] = value;
+    }
+    if (Object.keys(next).length) this.setPeople(next);
+    return this;
+  }
+
+  private incrementPeople(key: string, amount = 1) {
+    const current = Number(this.peopleProps[key]);
+    const next = (Number.isFinite(current) ? current : 0) + amount;
+    return this.setPeople({ [key]: next });
+  }
+
+  private peopleSnapshot() {
+    return this.sanitize(this.peopleProps);
+  }
+
+  private persistPeople() {
+    writeJson(PP, this.peopleProps);
   }
 
   private hydrateIds() {
@@ -305,6 +480,11 @@ class LoggifyBrowser {
       this.distinctId = this.distinctId || hex(16);
       this.sessionId = this.sessionId || hex(8);
     }
+    this.superProps = readJson(SP);
+    this.peopleProps = readJson(PP);
+    this.optedOut = storageGet(OPTOUT) === '1';
+    const uid = storageGet(UID);
+    if (uid) this.user = { ...this.stringRecord(this.peopleProps), id: uid };
   }
 
   private pageProps() {
@@ -517,16 +697,17 @@ class LoggifyBrowser {
   }
 
   private async post(body: unknown) {
-    if (Math.random() > (this.opts.sampleRate ?? 1)) return;
+    if (Math.random() > (this.opts.sampleRate ?? 1)) return true;
     try {
-      await fetch(`${this.opts.endpoint}/v1/ingest`, {
+      const res = await fetch(`${this.opts.endpoint}/v1/ingest`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-api-key': this.opts.apiKey },
         body: JSON.stringify(body),
         keepalive: true,
       });
+      return Boolean(res && 'ok' in res && res.ok);
     } catch {
-      /* never throw into host app */
+      return false;
     }
   }
 }

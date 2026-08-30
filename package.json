@@ -1,6 +1,6 @@
 {
   "name": "@loggifycloud/browser",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Loggify browser SDK - product analytics, RUM, and client errors",
   "license": "MIT",
   "type": "module",
