@@ -2,6 +2,7 @@
   "name": "@loggifycloud/browser",
   "version": "0.1.2",
   "description": "Loggify browser SDK - product analytics, RUM, and client errors",
+  "homepage": "https://loggify.cloud/docs",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",

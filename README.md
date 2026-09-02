@@ -1,5 +1,7 @@
 # @loggifycloud/browser
 
+Documentation: [https://loggify.cloud/docs](https://loggify.cloud/docs)
+
 First-party browser SDK for Mixpanel-like product analytics and Sentry-style RUM.
 
 ```ts
