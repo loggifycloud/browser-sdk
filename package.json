@@ -1,6 +1,6 @@
 {
   "name": "@loggifycloud/browser",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Loggify browser SDK - product analytics, RUM, and client errors",
   "homepage": "https://loggify.cloud/docs",
   "license": "MIT",
@@ -8,7 +8,9 @@
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
